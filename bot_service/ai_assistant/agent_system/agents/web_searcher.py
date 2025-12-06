@@ -182,7 +182,37 @@ class WebSearcherAgent:
             result = await executor.ainvoke({"input": task})
         except Exception as exc:
             logger.error("Не удалось выполнить веб-поиск через LangChain: %s", exc, exc_info=True)
-            return []
+            try:
+                direct_response = search_tool.run(query).strip()
+                if direct_response:
+                    return {
+                        'items': [
+                            {
+                                "id": f"web_{uuid4().hex[:8]}",
+                                "title": f"Веб-поиск: {query[:80]}",
+                                "knowledge": direct_response,
+                                "score": 0.0,
+                                "source": "langchain-web",
+                                "metadata": {
+                                    "task": task,
+                                    "tool": "DuckDuckGoSearchRun",
+                                    "result_source": "direct-fallback",
+                                    "error": str(exc)[:200],
+                                },
+                            }
+                        ],
+                        'source_links': getattr(search_tool, 'sources', []) if hasattr(search_tool, 'sources') else []
+                    }
+            except Exception as fallback_exc:
+                logger.warning(
+                    "Direct DuckDuckGo fallback после ошибки агента также не удался: %s",
+                    fallback_exc,
+                    exc_info=True,
+                )
+            return {
+                'items': [],
+                'source_links': []
+            }
 
         output_text = (result.get("output") or "").strip()
         fallback_triggered = (
@@ -201,12 +231,23 @@ class WebSearcherAgent:
                     exc_info=True,
                 )
                 direct_response = ""
+                if "dns error" in str(fallback_exc).lower() or "failed to lookup" in str(fallback_exc).lower():
+                    logger.warning("Проблемы с сетевым подключением при веб-поиске. Возвращаем пустой результат.")
+                    return {
+                        'items': [],
+                        'source_links': []
+                    }
 
             if direct_response:
                 output_text = direct_response
                 fallback_source = "direct-search"
                 if hasattr(search_tool, 'sources'):
                     source_links = getattr(search_tool, 'sources', [])
+            else:
+                return {
+                    'items': [],
+                    'source_links': []
+                }
         else:
             output_text = (
                 "DuckDuckGo не вернул свежих результатов по этому запросу. "

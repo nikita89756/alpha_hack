@@ -9,11 +9,11 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-import pandas as pd  
-from qdrant_client import QdrantClient, models  
+import pandas as pd  # noqa: E402
+from qdrant_client import QdrantClient, models  # noqa: E402
 
-from ai_assistant.agent_system.rag.controller import RetrieverController  
-from ai_assistant.agent_system.utils.model_loader import load_deeppavlov_bert  
+from ai_assistant.agent_system.rag.controller import RetrieverController  # noqa: E402
+from ai_assistant.agent_system.utils.model_loader import load_deeppavlov_bert  # noqa: E402
 
 
 logger = logging.getLogger(__name__)

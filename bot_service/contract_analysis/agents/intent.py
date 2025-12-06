@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Dict
 
 from ai_assistant.agent_system.agents.base import BaseAgent
@@ -37,11 +38,34 @@ class ContractIntentAgent(BaseAgent):
 
     @staticmethod
     def _parse_response(raw: str, request: str) -> Dict[str, Any]:
+        """Парсит ответ LLM, пытаясь извлечь JSON из различных форматов."""
+        payload = {}
+        
         try:
-            payload = json.loads(raw)
+            payload = json.loads(raw.strip())
         except json.JSONDecodeError:
-            logger.warning("ContractIntentAgent вернул невалидный JSON, используется fallback.")
-            payload = {}
+            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', raw, re.DOTALL)
+            if json_match:
+                try:
+                    payload = json.loads(json_match.group(1))
+                    logger.debug("JSON извлечен из markdown блока")
+                except json.JSONDecodeError:
+                    pass
+            
+            if not payload:
+                json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', raw, re.DOTALL)
+                if json_match:
+                    try:
+                        payload = json.loads(json_match.group(0))
+                        logger.debug("JSON извлечен из текста")
+                    except json.JSONDecodeError:
+                        pass
+            
+            if not payload:
+                logger.warning(
+                    "ContractIntentAgent вернул невалидный JSON, используется fallback. "
+                    f"Сырой ответ (первые 200 символов): {raw[:200]}"
+                )
 
         action = str(payload.get("action") or "").strip().lower()
         if action not in {"analyze", "draft"}:
