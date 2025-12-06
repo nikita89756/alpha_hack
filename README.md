@@ -39,6 +39,13 @@ graph TB
         AnalyzeImg[Analyze Image Service<br/>FastAPI<br/>:8005]
         DocParser[Document Parser Service<br/>FastAPI<br/>:8006]
         Summarizer[Summarizer Service<br/>Kafka Consumer]
+        STT[STT Service<br/>Speech-to-Text<br/>:8010]
+    end
+
+    subgraph "Business Services"
+        BusinessSvc[Business Service<br/>FastAPI<br/>:8007]
+        CalendarSvc[Calendar Service<br/>FastAPI<br/>:8008]
+        WBPnL[WB PnL Service<br/>FastAPI<br/>:8009]
     end
 
     subgraph "Data Processing"
@@ -61,6 +68,7 @@ graph TB
 
     subgraph "External Services"
         OpenRouter[OpenRouter API<br/>LLM Provider]
+        WBAPI[Wildberries API<br/>External]
     end
 
     %% Frontend connections
@@ -72,6 +80,10 @@ graph TB
     Gateway -->|Chats/Messages| MessageSvc
     Gateway -->|Image Analysis| AnalyzeImg
     Gateway -->|Document Parse| DocParser
+    Gateway -->|Business Management| BusinessSvc
+    Gateway -->|Calendar Events| CalendarSvc
+    Gateway -->|WB Analytics| WBPnL
+    Gateway -->|Onboarding| BotSvc
     Gateway -->|Kafka| Kafka
 
     %% Auth connections
@@ -97,6 +109,17 @@ graph TB
     AnalyzeImg --> OpenRouter
     AnalyzeImg --> MinIO
 
+    %% Business Service connections
+    BusinessSvc --> MongoDB
+
+    %% Calendar Service connections
+    CalendarSvc --> MongoDB
+
+    %% WB PnL Service connections
+    WBPnL --> MongoDB
+    WBPnL --> Redis
+    WBPnL --> WBAPI
+
     %% Summarizer connections
     Summarizer -->|Consume| Kafka
     Summarizer -->|Produce| Kafka
@@ -107,6 +130,7 @@ graph TB
     WebScraping --> Qdrant
     WebScraping --> PostgreSQL
     WebScraping --> OpenRouter
+    WebScraping --> BotSvc
     WebScraping -->|Produce| Kafka
 
     %% Qdrant Init
@@ -133,6 +157,10 @@ graph TB
     style AnalyzeImg fill:#009485
     style DocParser fill:#009485
     style Summarizer fill:#4ecdc4
+    style STT fill:#009485
+    style BusinessSvc fill:#009485
+    style CalendarSvc fill:#009485
+    style WBPnL fill:#009485
     style WebScraping fill:#ffa726
     style QdrantInit fill:#4ecdc4
     style Kafka fill:#231f20,color:#fff
@@ -142,6 +170,7 @@ graph TB
     style PostgreSQL fill:#336791,color:#fff
     style MinIO fill:#ff9900
     style OpenRouter fill:#6366f1
+    style WBAPI fill:#6366f1
 ```
 
 Система построена на микросервисной архитектуре с использованием FastAPI, MongoDB, Kafka, Redis, Qdrant и React. Все сервисы контейнеризированы и управляются через docker-compose.
@@ -276,10 +305,13 @@ Pydantic‑схемы в `web/shemas.py` ограничивают поля, бл
 
 **Основные возможности:**
 - Централизованная аутентификация через JWT токены
-- Маршрутизация запросов к message-service, analyze-service, document-parser-service
+- Маршрутизация запросов к микросервисам
 - Управление чатами и сообщениями
 - Обработка загрузки и анализа изображений
 - Парсинг документов
+- Управление бизнес-профилями
+- Управление календарем событий
+- Аналитика Wildberries (P&L)
 - Генерация названий чатов через Kafka
 
 **API Endpoints:**
@@ -291,6 +323,19 @@ Pydantic‑схемы в `web/shemas.py` ограничивают поля, бл
 - `GET /api/messages/history/{chat_id}` - История сообщений
 - `POST /api/process-image` - Анализ изображения
 - `POST /api/parse` - Парсинг документа
+- `POST /api/businesses/` - Создание бизнес-профиля
+- `GET /api/businesses/` - Список бизнесов пользователя
+- `GET /api/businesses/{business_id}` - Информация о бизнесе
+- `PATCH /api/businesses/{business_id}` - Обновление бизнеса
+- `DELETE /api/businesses/{business_id}` - Удаление бизнеса
+- `POST /api/calendar/events` - Создание события
+- `GET /api/calendar/events` - Список событий
+- `GET /api/calendar/events/{event_id}` - Информация о событии
+- `PUT /api/calendar/events/{event_id}` - Обновление события
+- `DELETE /api/calendar/events/{event_id}` - Удаление события
+- `GET /api/calendar/stats/burnout` - Статистика по антивыгоранию
+- `POST /api/wb/build_pnl` - Расчет P&L Wildberries
+- `GET /api/wb/get_cached_pnl/{business_id}` - Получение кэшированного P&L
 
 **Технологии:**
 - FastAPI
@@ -304,8 +349,11 @@ Pydantic‑схемы в `web/shemas.py` ограничивают поля, бл
 - `AUTH_SERVICE_URL` - URL auth-service (по умолчанию http://auth-service:8004)
 - `IMAGE_ANALYSIS_SERVICE_URL` - URL analyze-service (по умолчанию http://analyze-service:8005)
 - `DOCUMENT_PARSER_SERVICE_URL` - URL document-parser-service (по умолчанию http://document-parser-service:8006)
+- `BUSINESS_SERVICE_URL` - URL business-service (по умолчанию http://business-service:8007)
+- `CALENDAR_SERVICE_URL` - URL calendar-service (по умолчанию http://calendar-service:8008)
+- `WB_SERVICE_URL` - URL wb-pnl-service (по умолчанию http://wb-pnl-service:8009)
 - `KAFKA_BOOTSTRAP_SERVERS` - Адреса Kafka брокеров
-- `REQUEST_TIMEOUT` - Таймаут запросов (по умолчанию 30 секунд)
+- `REQUEST_TIMEOUT` - Таймаут запросов (по умолчанию 120 секунд)
 - `CORS_ORIGINS` - Разрешенные источники для CORS
 
 ---
@@ -576,6 +624,125 @@ Pydantic‑схемы в `web/shemas.py` ограничивают поля, бл
 - `QDRANT_URL` - URL Qdrant сервера (по умолчанию http://qdrant:6333)
 
 ---
+### Business Service (business_service)
+
+**Порт:** 8007
+
+**Назначение:** Сервис управления бизнес-профилями пользователей. Позволяет пользователям создавать и управлять несколькими бизнес-профилями, что необходимо для работы с различными проектами и компаниями.
+
+**Основные возможности:**
+- Создание бизнес-профилей для пользователей
+- Получение списка всех бизнесов пользователя
+- Обновление информации о бизнесе
+- Удаление бизнес-профилей
+- Хранение метаданных бизнеса (название, описание, тип и т.д.)
+
+**API Endpoints:**
+- `POST /businesses/` - Создание нового бизнес-профиля
+- `GET /businesses/` - Список всех бизнесов пользователя
+- `GET /businesses/{business_id}` - Детальная информация о бизнесе
+- `PATCH /businesses/{business_id}` - Обновление данных бизнеса
+- `DELETE /businesses/{business_id}` - Удаление бизнес-профиля
+
+**Технологии:**
+- FastAPI
+- Motor (асинхронный MongoDB драйвер)
+- MongoDB для хранения бизнес-профилей
+
+**Переменные окружения:**
+- `MONGODB_URL` - URL подключения к MongoDB
+- `DB_NAME` - Имя базы данных
+
+---
+
+### Calendar Service (calendar_service)
+
+**Порт:** 8008
+
+**Назначение:** Сервис управления календарем событий пользователей. Позволяет создавать, обновлять и отслеживать события, включая функционал предотвращения выгорания.
+
+**Основные возможности:**
+- Создание событий в календаре
+- Получение списка событий с фильтрацией по дате, категории, антивыгоранию
+- Обновление и удаление событий
+- Статистика по событиям антивыгорания
+- Поддержка различных категорий событий
+
+**API Endpoints:**
+- `POST /calendar/events` - Создание нового события
+- `GET /calendar/events` - Список событий с фильтрацией
+- `GET /calendar/events/{event_id}` - Информация о конкретном событии
+- `PUT /calendar/events/{event_id}` - Обновление события
+- `DELETE /calendar/events/{event_id}` - Удаление события
+- `GET /calendar/stats/burnout` - Статистика по антивыгоранию
+
+**Технологии:**
+- FastAPI
+- Motor (асинхронный MongoDB драйвер)
+- MongoDB для хранения событий
+
+**Переменные окружения:**
+- `MONGODB_URL` - URL подключения к MongoDB
+- `DB_NAME` - Имя базы данных
+
+---
+
+### WB PnL Service (wb_analyzer)
+
+**Порт:** 8009
+
+**Назначение:** Сервис для анализа прибыли и убытков (P&L) по продажам на маркетплейсе Wildberries. Интегрируется с API Wildberries для получения данных о продажах, расходах и прибыли.
+
+**Основные возможности:**
+- Расчет P&L на основе данных Wildberries API
+- Кэширование результатов в Redis для быстрого доступа
+- Хранение API ключей Wildberries для каждого бизнеса
+- Шифрование чувствительных данных (API ключи)
+- Получение кэшированных данных без обращения к внешнему API
+
+**API Endpoints:**
+- `POST /wb/build_pnl` - Запрос на построение P&L (с расчетом)
+- `GET /wb/get_cached_pnl/{business_id}` - Получение кэшированного P&L
+
+**Технологии:**
+- FastAPI
+- Motor (асинхронный MongoDB драйвер)
+- Redis для кэширования результатов
+- Интеграция с Wildberries API
+- Шифрование данных
+
+**Переменные окружения:**
+- `MONGO_URL` - URL подключения к MongoDB
+- `REDIS_URL` - URL подключения к Redis
+- `ENCRYPTION_KEY` - Ключ для шифрования API ключей
+
+---
+
+### STT Service (speach_to_text)
+
+**Порт:** 8010
+
+**Назначение:** Сервис преобразования речи в текст (Speech-to-Text). Используется для обработки голосовых сообщений в чате.
+
+**Основные возможности:**
+- Преобразование аудио в текст
+- Поддержка различных форматов аудио
+- Использование моделей Hugging Face для распознавания речи
+- Health check для мониторинга состояния сервиса
+
+**API Endpoints:**
+- `POST /transcribe` - Преобразование аудио в текст
+- `GET /health` - Health check
+
+**Технологии:**
+- FastAPI
+- Hugging Face Transformers для моделей STT
+- Асинхронная обработка запросов
+
+**Переменные окружения:**
+- Настройки модели через переменные окружения или конфигурационные файлы
+
+---
 ### Frontend (frontend)
 
 **Порт:** 3000 (внешний), 80 (внутри контейнера)
@@ -662,6 +829,10 @@ Pydantic‑схемы в `web/shemas.py` ограничивают поля, бл
 - **8004** - Auth Service
 - **8005** - Analyze Image Service
 - **8006** - Document Parser Service
+- **8007** - Business Service
+- **8008** - Calendar Service
+- **8009** - WB PnL Service (Wildberries Analytics)
+- **8010** - STT Service (Speech-to-Text)
 - **8080** - Airflow Web UI (логин: airflow, пароль: airflow)
 - **3000** - Frontend
 - **6333** - Qdrant API
