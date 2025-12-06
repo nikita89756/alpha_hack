@@ -27,7 +27,6 @@ from contract_analysis.agents import (
     ContractReviewerAgent,
 )
 from contract_analysis.config import CONTRACT_CONFIG, RetrievalConfig
-from contract_analysis.prompts import DISCLAIMER_TEXT
 
 
 @dataclass
@@ -375,7 +374,6 @@ class ContractAnalysisSystem:
                     "notes": context_bundle.notes,
                 },
                 "result": state.get("result") or "",
-                "disclaimer": DISCLAIMER_TEXT,
             }
             return {"output": output}
 

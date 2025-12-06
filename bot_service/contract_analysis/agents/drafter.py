@@ -45,6 +45,12 @@ class ContractDraftAgent(BaseAgent):
             context_block=context_block.strip() or "Контекст не найден.",
         )
         draft = (await self.ainvoke(prompt)).strip()
-        if DISCLAIMER_TEXT not in draft:
-            draft = f"{draft.rstrip()}\n\n{DISCLAIMER_TEXT}"
+        
+        while DISCLAIMER_TEXT in draft:
+            draft = draft.replace(DISCLAIMER_TEXT, "").strip()
+        
+        while "\n\n\n" in draft:
+            draft = draft.replace("\n\n\n", "\n\n")
+        
+        draft = f"{draft.rstrip()}\n\n{DISCLAIMER_TEXT}"
         return draft
