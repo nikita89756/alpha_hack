@@ -179,89 +179,259 @@ graph TB
 
 ### Bot Service (bot_service)
 
-### Зачем это банку и клиенту
-Support Hints Agent System (SHAS) превращает разрозненные базы знаний банка, консультации операторов и документы клиентов в единый контекст, который помогает владельцам микробизнеса принимать решения без ожидания консультаций. Платформа уже умеет:
+AI Copilot — мультиагентная RAG-платформа на FastAPI, которая помогает владельцам микробизнеса отвечать на вопросы на основе собственной базы знаний (Qdrant) и персональной памяти пользователя. Система включает основной диалоговый конвейер, контроллер памяти и отдельный пайплайн анализа договоров.
 
-- подключать корпоративные источники знаний (`data_qa.csv`, внешние документы, диалоги из кол-центра) и преобразовывать их в интерактивные подсказки;
-- собирать долговременную память по каждому клиенту (повторяющиеся юридические кейсы, условия договоров, маркетинговые кампании) и мгновенно ее возвращать;
-- работать через легкий API и UI, который можно встроить в мобильный банк, CRM или конструктор лендингов;
-- гарантировать прослеживаемость ответа: к каждому совету прилагаются фрагменты из базы знаний и памяти.
+## Содержание
+- [Возможности](#возможности)
+- [Архитектура](#архитектура)
+- [Структура репозитория](#структура-репозитория)
+- [Технологический стек](#технологический-стек)
+- [Требования и подготовка окружения](#требования-и-подготовка-окружения)
+- [Пример .env](#пример-env)
+- [Запуск API](#запуск-api)
+- [HTTP API](#http-api)
+- [Управление знаниями и памятью](#управление-знаниями-и-памятью)
+- [Пайплайн анализа контрактов](#пайплайн-анализа-контрактов)
+- [CLI и ноутбуки](#cli-и-ноутбуки)
+- [Качество и отладка](#качество-и-отладка)
+- [Расширение и кастомизация](#расширение-и-кастомизация)
 
-### Соответствие ключевым критериям жюри
-- **Стабильность и отказоустойчивость.** Цепочка `Intent → Retrieval → Answer → Validation` в `agent_system/service/pipeline.py` покрывает каждую фазу `try/except`, логирует результаты и умеет аварийно завершать диалог без потери состояния. Дополнительная валидация ответа (`ValidationAgent`) предотвращает деградацию качества при сбоях внешних сервисов. Скрипт `init_qdrant.py` разворачивает коллекции с повторяемыми настройками, а `web/api.py` возвращает детализированные HTTP‑статусы.
-- **Точность и контекстность.** Гибридный поиск (`agent_system/rag/controller.py`) объединяет дообученный ruBERT (`agent_system/models/finetuned_retriever/`) и BM25 (`SparseEncoder`) через Reciprocal Rank Fusion, что дает релевантный контекст даже по коротким запросам. Ответы ссылаются на знания пользователя (LTM) и общей базы (KB), поэтому бизнес‑решения опираются на факты клиента.
-- **Интуитивный и быстрый интерфейс.** API описано через Pydantic‑схемы (`web/shemas.py`), поэтому разработчики фронтенда заранее знают поля, статусы и тексты сообщений. История беседы передается списком сообщений, что упрощает работу дизайнеру UX‑чатов: нет лишних ручных маппингов.
-- **Горизонтальное масштабирование.** FastAPI‑приложение (`main.py`, `web/api.py`) stateless: его можно размножать за счет Kubernetes/HPA, а Qdrant поддерживает шардинг. Долговременная память хранится в отдельной коллекции, что позволяет добавлять узлы без миграций схем.
-- **Архитектура для быстрых фич.** Все агенты наследуются от `BaseAgent`, достаточно переопределить промпт в `agent_system/source/prompts.py`, чтобы добавить, например, инспектора уместности цены. Контроллер памяти (`agent_system/memory/memory_controller.py`) уже умеет дедубликацию и замену устаревших фактов — расширения пишутся декларативно.
-- **Интеграции и экосистема.** Qdrant‑контроллер предоставляет CRUD‑операции (добавление, очистка, фильтрация по `user_id`), поэтому внешние системы банка (документооборот, KYC, риск‑скоринг) добавляют и удаляют знания без обходных скриптов. Память и знания разделены на коллекции, что упрощает разграничение доступа.
-- **Конфигурируемость под отрасли.** Любой микробизнес может загрузить специализированные документы через `/knowledge/upload` и обучить память на собственных диалогах через `/memorize`. Промпты содержат переменные (сегмент, тональность, юридические требования), поэтому кастомизация не требует правок кода.
-- **Конфиденциальность и комплаенс.** Ключи OpenRouter/Qdrant подхватываются из `.env`, запросы идут через HTTPS, а payload Qdrant хранит `user_id` как keyword для быстрого удаления по требованию клиента (GDPR/ФЗ‑152). Вся обработка детерминирована и журналируется (`agent_system/utils/logger.py`).
-- **Обоснованные сценарии LLM.** LLM задействуется в трех точках: переписывание интента, генерация ответа и извлечение знаний. Каждая точка имеет отдельный промпт и метрики, что документировано в `agent_system/source/prompts.py` и `agent_system/memory/promts.py`.
-- **Качество промптов и интеграции.** Форматы JSON‑ответов валидируются, а при сбое агент возвращает дефолтные запросы (см. `IntentRewriteAgent.run`). Это позволяет безболезненно обновлять модель или менять LLM‑провайдера.
-- **Польза для микробизнеса и масштабирование внутри банка.** Уже реализованы сценарии «Разобраться с налоговой отчетностью», «Проверить условия маркетинговой акции», «Подготовить договор поставки». Те же API можно подключить к сегментам агро, HoReCa, самозанятых — достаточно загрузить профильный контент. Архитектура повторяемая, поэтому банк может масштабировать сервис во все регионы и филиалы.
+## Возможности
+- Мультиагентный LangGraph-конвейер (`ai_assistant/agent_system/service/pipeline.py`) с IntentRewrite, Retrieval, RAG-валидацией, fallback web-search и валидатором ответа.
+- Управление долгосрочной памятью пользователя через `MemoryController` (Qdrant `long_term_memory`).
+- Пайплайн анализа договоров (`contract_analysis/system.py`) с отдельными агентами intent/reviewer/drafter и автоматическим выбором стратегии контекста.
+- REST API на FastAPI (`web/api.py`) с эндпоинтами `/answer`, `/memory/memorize`, `/contract/analyze`.
+- Qdrant + DeepPavlov BERT-энкодер (`ai_assistant/agent_system/rag/controller.py`) для dense retrieval.
+- CLI-утилиты и Jupyter-ноутбуки для ручного тестирования (`artifacts/`).
+- Dockerfile и стандартизованные зависимости (`requirements.txt`, `pyproject.toml`).
 
-### Архитектура и поток данных
+## Архитектура
 ```
-Клиент / UI / CRM
-        │ REST (FastAPI, web/api.py)
-        ▼
-  InterviewSession (agent_system/app.py)
-        │ orchestrates
-        ▼
-  AgentPipeline (agent_system/service/pipeline.py)
-   ├─ IntentRewriteAgent → корректный запрос в KB/LTM
-   ├─ RetrievalAgent → RetrieverController (hybrid RAG)
-   ├─ AnswerAgent → генерация черновика
-   └─ ValidationAgent → проверка политики/тона
-        │
-        ├─ Knowledge Base (Qdrant, hybrid vectors)
-        └─ Long-term Memory (Qdrant, per user)
+FastAPI (web/api.py)
+├─ InterviewSession (ai_assistant/agent_system/app.py)
+│  └─ AgentPipeline (service/pipeline.py)
+│     ├─ IntentRewriteAgent
+│     ├─ RetrievalAgent  ─┐
+│     ├─ RagValidatorAgent│
+│     ├─ WebSearcherAgent│  Qdrant (RetrieverController)
+│     ├─ AnswerAgent     │    ├─ knowledge_base collection
+│     └─ ValidationAgent ┘    └─ long_term_memory collection
+├─ MemoryController (agent_system/memory/memory_controller.py)
+└─ ContractAnalysisSystem (contract_analysis/system.py)
+   ├─ ContractIntentAgent
+   ├─ RagValidatorAgent + WebSearcher
+   ├─ ContractReviewerAgent / ContractDraftAgent
+   └─ DISCLAIMER и выдача структуры intent/context/result
 ```
 
-- **RetrieverController** (Hybrid RAG) — управляет коллекциями `knowledge_base` и `long_term_memory`, кодирует текст через ruBERT (`BertSentenceEncoder`) и BM25 (`SparseEncoder`), объединяет результаты RRF, поддерживает upsert/delete/clear.  
-- **MemoryController** — извлекает факты из диалогов, ранжирует (`score`, `keep`), удаляет дубли, обновляет Qdrant. Использует отдельный промпт для проверки юридических/маркетинговых ограничений.  
-- **Init & Ops.** `init_qdrant.py` создает коллекции, индексы (`user_id`), запускается в CI/CD перед деплоем. Наборы ноутбуков (`train_retrieval.ipynb`, `llm_test.ipynb`) служат для тонкой настройки моделей и быстрой валидации промптов.
+## Структура репозитория
+```
+.
+├── ai_assistant/
+│   ├── agent_system/
+│   │   ├── agents/                  # Intent, Answer, Validator, WebSearcher и т.д.
+│   │   ├── memory/                  # MemoryController и промпты извлечения фактов
+│   │   ├── rag/                     # RetrieverController + BertSentenceEncoder
+│   │   ├── service/pipeline.py      # LangGraph-конвейер диалога
+│   │   ├── utils/                   # AsyncLLMClient, logger, загрузка моделей
+│   │   ├── app.py                   # Orchestrator сессии
+│   │   └── config.py
+├── contract_analysis/
+│   ├── agents/                      # intent / reviewer / drafter
+│   ├── config.py                    # настройки температур, лимитов и т.д.
+│   ├── prompts.py                   # шаблоны подсказок и DISCLAIMER
+│   └── system.py                    # отдельный LangGraph для договоров
+├── web/
+│   ├── api.py                       # FastAPI-приложение и endpoints
+│   ├── config.py                    # параметры инференса
+│   └── shemas.py                    # Pydantic-схемы
+├── artifacts/
+│   ├── chat_cli.py                  # CLI для проверки /answer
+│   ├── doc_analysis.ipynb
+│   ├── interactive_interview.ipynb
+│   └── promt_stend.ipynb
+├── Dockerfile
+├── requirements.txt
+├── pyproject.toml                    # ruff + mypy конфигурация
+└── main.py                           # uvicorn entrypoint (python main.py)
+```
 
-### API и ключевые сценарии
-| Endpoint | Что делает | Когда использовать |
-| --- | --- | --- |
-| `POST /answer` | Запускает цепочку агентов и возвращает ответ, списки `kb`/`ltm`, `next_action`. | Чат в мобильном банке, голосовой бот, внутренний ассистент оператора. |
-| `POST /memorize` | Прогоняет диалог через MemoryController, сохраняет новые факты в LTM. | Снятие нагрузки с операторов: знания автоматически попадают в память после чата. |
-| `POST /knowledge/upload` | Загружает внешние документы (PDF, инструкции, шаблоны) в KB. | Быстрая адаптация под отрасль или кампанию, например акции для малого бизнеса. |
+## Технологический стек
+- Python 3.12, FastAPI, Uvicorn
+- LangGraph, langchain-core, langchain-community
+- httpx + OpenRouter (модель `deepseek/deepseek-chat-v3.1` по умолчанию)
+- Qdrant (cloud/on-prem) и DeepPavlov RuBERT для dense retrieval
+- Jupyter/IPython для интерактивных сценариев
+- Ruff + mypy для статического анализа
 
-Pydantic‑схемы в `web/shemas.py` ограничивают поля, благодаря чему фронтенд получает предсказуемые сообщения об ошибках (400/503/500) и не дублирует валидацию.
+## Требования и подготовка окружения
+1. Установите Python ≥3.12, Git и Docker (по необходимости).
+2. Подготовьте Qdrant (cloud URL или локальный `docker run qdrant/qdrant`).
+3. Получите OpenRouter API key (LLM).
+4. Клонируйте репозиторий и установите зависимости:
 
-### Поток данных LLM и промпты
-- `agent_system/source/prompts.py` описывает системные роли для каждого агента: переписывание интента учитывает тональность бренда, AnswerAgent умеет ссылаться на конкретные фрагменты (`KB#id`/`LTM#id`), а Validator сверяет стиль с требованиями банка (строгий, дружелюбный, call-to-action).  
-- `agent_system/memory/promts.py` задает структуру JSON, в котором LLM возвращает кандидатные знания (ключи, роли, объяснение). Validation step накладывает минимальный `score`, что защищает память от «шума».  
-- Файл `data_qa.csv` служит обучающим корпусом — он пополняется по мере работы, а `train_retrieval.ipynb` использует его, чтобы дообучить dense‑модель на свежих вопросах клиентов.
+   ```bash
+   git clone https://github.com/<org>/<repo>.git
+   cd <repo>
+   python -m venv .venv
+   .\\.venv\\Scripts\\activate          # Windows
+   pip install --upgrade pip
+   pip install -r requirements.txt   # или pip install -e .
+   ```
 
-### Стабильность, наблюдаемость и восстановление
-- Логгер (`agent_system/utils/logger.py`) пишет структуру событий (source, score, user_id) и обрезает длинные тексты, чтобы не забивать сторидж.  
-- Каждый контроллер возвращает человеческие ошибки: `/memorize` различает «не найдено знаний» и «ошибка Qdrant».  
-- При непредвиденных ответах LLM IntentRewriteAgent подставляет исходный запрос, а Validator возвращает черновик без форматирования — UX не разрушается.  
-- Файл `Dockerfile` создает воспроизводимый образ с Python 3.12, отключает кеш pip и автоматически подтягивает requirements из `pyproject.toml` (пакеты: FastAPI, LangChain, Qdrant, spaCy, sentence-transformers, torch).  
-- `.gitattributes` и `pyproject.toml` настроены под ruff/mypy, что удерживает качество кода в CI.
+5. Скопируйте `.env` и заполните ключевые переменные.
 
-### Масштабирование и интеграции
-- **Горизонтальные инстансы.** FastAPI stateless, поэтому можно поднять несколько реплик за балансировщиком. Все пользовательские данные лежат в Qdrant с фильтрами по `user_id`, что позволяет направлять трафик любых клиентов на любую ноду.  
-- **Пайплайн расширяется модулями.** Хотите добавить агента для генерации next best offer? Создайте новый класс от `BaseAgent`, добавьте шаг в `AgentPipeline` — это не затрагивает остальные блоки.  
-- **Интеграция со стэком банка.** REST‑ API легко подсадить к BPM, CRM и мобильному приложению. Через `/knowledge/upload` можно подтягивать документы из внутренних ECM, а `/memorize` — подключить live‑логов чата.  
-- **Легкость тиражирования.** Для нового региона меняется только набор знаний и переменные промпта, при этом код и инфраструктура остаются одинаковыми. Это удовлетворяет требованию банка по быстрому запуску услуги в любом отделении.
+## Пример .env
+```env
+# LLM
+LLM_API_KEY=<openrouter_key>
+OPENROUTER_CHAT_BASE=https://openrouter.ai/api/v1/chat/completions
 
-### Безопасность и комплаенс
-- Чувствительные ключи (`OPENROUTER_API_KEY`, `QDRANT_HOST/PORT`) лежат в `.env` и не попадают в репозиторий.  
-- Память каждого клиента хранится в своей группе точек; удалить данные конкретного пользователя можно одной командой `delete_memory_by_id`.  
-- Возможен on‑prem Qdrant (кластеры в периметре банка), а OpenRouter можно заменить на частный провайдер, просто меняя `InferenceConfig`.  
-- Журналы не содержат персональных данных: тексты усечены, идентификаторы захешированы перед отправкой в observability‑стек.
+# FastAPI
+HOST=0.0.0.0
+PORT=8000
 
-### Дорожная карта и потенциал тиражирования
-1. **Автогенерация сценариев** для юридических консультаций на основе `data_qa.csv` (LLM формирует чек-листы).  
-2. **Интеграция с банковскими продуктами**: например, советник по кредитам малого бизнеса, который использует ту же память.  
-3. **Маркетплейс отраслевых паков** — банк может поставлять готовые наборы знаний (строительство, медицина), клиенты подключают их за минуты.  
-4. **Витрина метрик** (вроде NLU‑accuracy, success rate), считываемых из логов RAG — для жюри и бизнес-подразделений.
+# Qdrant
+QDRANT_URL=https://<cluster>.qdrant.cloud
+QDRANT_API_KEY=<token>
+QDRANT_KB_COLLECTION=knowledge_base
+QDRANT_LTM_COLLECTION=long_term_memory
+QDRANT_PREFER_GRPC=false
+
+# Contract analysis tuning (опционально)
+CONTRACT_ANALYSIS_KB_LIMIT=6
+CONTRACT_ANALYSIS_SOURCE=DocAnalysis
+CONTRACT_DRAFT_TEMPERATURE=0.65
+
+TOKENIZERS_PARALLELISM=false
+```
+
+## Запуск API
+### Локально (разработка)
+```bash
+uvicorn web.api:app --host 0.0.0.0 --port 8000 --reload
+# либо
+python main.py                      # читает HOST/PORT и запускает uvicorn
+```
+
+### Docker
+```bash
+docker build -t ai-copilot .
+docker run --env-file .env -p 8000:8004 ai-copilot \
+  uvicorn web.api:app --host 0.0.0.0 --port 8004
+```
+По умолчанию Dockerfile слушает 8004 — пробросьте порт на 8000/https как нужно.
+
+## HTTP API
+### `POST /answer`
+Запускает основной агентный конвейер.
+
+```json
+{
+  "query": "Как закрыть кассовый разрыв к следующей неделе?",
+  "history": [{"role": "user", "content": "Продажи падают"}],
+  "user_id": 123
+}
+```
+
+Ответ:
+```json
+{
+  "answer": "<финальный текст>",
+  "next_action": "continue",
+  "kb": [{"id": "kb_42", "title": "Cash-flow план", "knowledge": "..."}],
+  "ltm": [{"id": "ltm_7", "title": "Текущий проект", "knowledge": "..."}]
+}
+```
+
+### `POST /memory/memorize`
+Передаёт историю диалога и сохраняет факты в Qdrant `long_term_memory`.
+
+```json
+{
+  "user_id": "123",
+  "dialogue": [
+    {"role": "user", "content": "Я владелец кофейни в Казани"},
+    {"role": "assistant", "content": "Запомнила"}
+  ]
+}
+```
+
+Возвращает количество сохранённых фрагментов и их содержимое.
+
+### `POST /contract/analyze`
+Оркестрирует пайплайн анализа договоров. Возвращает структуру intent/context/result/disclaimer:
+
+```json
+{
+  "intent": {
+    "action": "analyze",
+    "document_type": "NDA",
+    "key_requirements": ["ограничение на 12 месяцев"],
+    "notes": "",
+    "raw": {...}
+  },
+  "context": {
+    "source": "kb",
+    "strategy": "kb",
+    "notes": "",
+    "items": [{"id": "doc:12", "title": "Clause A", "knowledge": "..."}]
+  },
+  "result": "<review/draft>",
+  "disclaimer": "<DISC>"
+}
+```
+
+## Управление знаниями и памятью
+- **RetrieverController** (`ai_assistant/agent_system/rag/controller.py`) использует DeepPavlov RuBERT для эмбеддингов. При первом запуске чекпоинт качается из HF и кэшируется в `ai_assistant/agent_system/model`.
+- **Коллекции Qdrant**:
+  - `knowledge_base`: структурированные знания с полями `id`, `title`, `knowledge`, `source`, `metadata`.
+  - `long_term_memory`: персональные факты (`user_id`, `knowledge`, `score`).
+- **MemoryController** (`agent_system/memory/memory_controller.py`) выделяет факты из диалога, валидирует с помощью LLM и upsert'ит через RetrieverController.
+- Для наполнения KB используйте собственный ETL или ноутбук `artifacts/doc_analysis.ipynb`, затем `retriever.upsert_knowledge_base(...)`.
+
+## Пайплайн анализа контрактов
+- Конфигурация агентов описана в `contract_analysis/config.py` и может переопределяться переменными `CONTRACT_*`.
+- Граф (`contract_analysis/system.py`):
+  1. `ContractIntentAgent` понимает действие (`analyze` / `draft`), тип документа и требования.
+  2. `_prepare_context` ищет DocAnalysis фрагменты через RetrieverController, затем RagValidator выбирает стратегию (`kb`, `web_search`, `llm_only`); при необходимости подключается `WebSearcherAgent`.
+  3. `ContractReviewerAgent` либо `ContractDraftAgent` генерирует результат.
+  4. В ответ добавляется `DISCLAIMER_TEXT` (`contract_analysis/prompts.py`).
+- Настройки: `CONTRACT_ANALYSIS_KB_LIMIT`, `CONTRACT_ANALYSIS_SOURCE`, `CONTRACT_INTENT_MAX_TOKENS` и т.д.
+
+## CLI и ноутбуки
+- `python artifacts/chat_cli.py history|exit --message "<text>"` — локальный тест диалогового API. История хранится в `artifacts/chat_history.json`.
+- Jupyter:
+  - `interactive_interview.ipynb` — шаг за шагом демонстрация `/answer`.
+  - `doc_analysis.ipynb` — эксперименты с контекстом contract analysis.
+  - `promt_stend.ipynb` — стенд для отладки промптов агентов.
+Перед запуском ноутбуков установите `ipykernel` и активируйте нужное ядро.
+
+## Качество и отладка
+- Запускайте тесты и линты из корня:
+
+  ```bash
+  python -m pytest                     # (если добавлены тесты)
+  ruff check ai_assistant contract_analysis web
+  ruff format ai_assistant contract_analysis web
+  mypy ai_assistant contract_analysis
+  ```
+
+- Логи настраиваются через `ai_assistant/agent_system/utils/logger.py` и выводятся в stdout (INFO по умолчанию).
+- Частые проблемы:
+  - `LLM_API_KEY` не задан → FastAPI не поднимется (ошибка в lifespan).
+  - Нет доступа к Qdrant → RetrieverController бросит HTTP 500 при старте.
+  - Hugging Face rate limit → добавьте `HF_HOME` и предварительно скачайте модель.
+
+## Расширение и кастомизация
+- Новые агенты LangGraph: добавьте класс в `ai_assistant/agent_system/agents/` и включите его в `AgentPipeline`.
+- Смена модели OpenRouter: переопределите `InferenceConfig` или переменные окружения `OPENROUTER_CHAT_BASE` / `LLM_API_KEY`.
+- Альтернативный retriever: замените `load_deeppavlov_bert` в `web/api.py` на собственный энкодер (sentence transformers, rerankers и т.д.).
+- Новые типы памяти: расширьте `MemoryController.extract_and_validate` или добавьте отдельный эндпоинт в `web/api.py`.
 
 ---
+
+AI Copilot рассчитан на быстрые эксперименты и адаптацию под доменные базы знаний: добавляйте собственные коллекции Qdrant, подключайте CRM/ERP и кастомизируйте ноутбуки. Contributions welcome!
 
 ### Auth Service (auth_service)
 
@@ -853,6 +1023,7 @@ Pydantic‑схемы в `web/shemas.py` ограничивают поля, бл
 3. **Airflow:** http://localhost:8080
 4. **MinIO Console:** http://localhost:9001
 5. **Qdrant Dashboard:** http://localhost:6333/dashboard
+
 
 
 
