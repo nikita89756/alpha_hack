@@ -1,0 +1,558 @@
+
+services:
+  airflow-scheduler:
+    build:
+      context: ./web_scraping_service
+      dockerfile: Dockerfile.airflow
+    container_name: airflow-scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      airflow-webserver:
+        condition: service_healthy
+      qdrant-init:
+        condition: service_completed_successfully
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:-bxaCYJBlwMvVRGjyVwYnokGYXic-VlZX2xbe94HwfUk=}
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=True
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - EXTERNAL_SERVICE_URL=${EXTERNAL_SERVICE_URL}
+      - EXTERNAL_SERVICE_TIMEOUT=${EXTERNAL_SERVICE_TIMEOUT:-60}
+      - BOT_SERVICE_URL=http://bot-service:8003
+      - QDRANT_URL=qdrant
+      - QDRANT_PORT=6333
+      - TG_BOT_API=${TG_BOT_API:-}
+      - TG_CHAT_ID=${TG_CHAT_ID:-}
+    volumes:
+      - ./web_scraping_service/dags:/opt/airflow/dags
+      - ./web_scraping_service/parsers:/opt/airflow/parsers
+      - ./web_scraping_service/tools:/opt/airflow/tools
+      - ./web_scraping_service/logs:/opt/airflow/logs
+      - ./web_scraping_service/plugins:/opt/airflow/plugins
+      - ./bot_service/agent_system/service:/opt/airflow/bot_service_data/service
+    command: ["airflow", "scheduler"]
+    networks:
+      - chatbot-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  airflow-webserver:
+    build:
+      context: ./web_scraping_service
+      dockerfile: Dockerfile.airflow
+    container_name: airflow-webserver
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:-bxaCYJBlwMvVRGjyVwYnokGYXic-VlZX2xbe94HwfUk=}
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=True
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__API__AUTH_BACKENDS=airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - BOT_SERVICE_URL=http://bot-service:8003
+      - EXTERNAL_SERVICE_TIMEOUT=${EXTERNAL_SERVICE_TIMEOUT:-60}
+      - TG_BOT_API=${TG_BOT_API:-}
+      - TG_CHAT_ID=${TG_CHAT_ID:-}
+    volumes:
+      - ./web_scraping_service/dags:/opt/airflow/dags
+      - ./web_scraping_service/parsers:/opt/airflow/parsers
+      - ./web_scraping_service/tools:/opt/airflow/tools
+      - ./web_scraping_service/logs:/opt/airflow/logs
+      - ./web_scraping_service/plugins:/opt/airflow/plugins
+      - ./bot_service/agent_system/service:/opt/airflow/bot_service_data/service
+    ports:
+      - "8080:8080"
+    command: ["airflow", "webserver"]
+    networks:
+      - chatbot-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+
+  postgres:
+    image: postgres:15
+    container_name: airflow-postgres
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    networks:
+      - chatbot-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  airflow-init:
+    build:
+      context: ./web_scraping_service
+      dockerfile: Dockerfile.airflow
+    container_name: airflow-init
+    user: "0:0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant-init:
+        condition: service_completed_successfully
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW__CORE__FERNET_KEY=${AIRFLOW_FERNET_KEY:-bxaCYJBlwMvVRGjyVwYnokGYXic-VlZX2xbe94HwfUk=}
+      - AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=True
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - _AIRFLOW_DB_UPGRADE=true
+      - _AIRFLOW_WWW_USER_CREATE=true
+      - _AIRFLOW_WWW_USER_USERNAME=airflow
+      - _AIRFLOW_WWW_USER_PASSWORD=airflow
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - BOT_SERVICE_URL=http://bot-service:8003
+      - EXTERNAL_SERVICE_TIMEOUT=${EXTERNAL_SERVICE_TIMEOUT:-60}
+      - QDRANT_URL=qdrant
+      - QDRANT_PORT=6333
+      - TG_BOT_API=${TG_BOT_API:-}
+      - TG_CHAT_ID=${TG_CHAT_ID:-}
+    volumes:
+      - ./web_scraping_service/dags:/opt/airflow/dags
+      - ./web_scraping_service/parsers:/opt/airflow/parsers
+      - ./web_scraping_service/tools:/opt/airflow/tools
+      - ./web_scraping_service/logs:/opt/airflow/logs
+      - ./web_scraping_service/plugins:/opt/airflow/plugins
+      - ./bot_service/agent_system/service:/opt/airflow/bot_service_data/service
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        echo "Создание директорий..."
+        mkdir -p /opt/airflow/logs/scheduler
+        mkdir -p /opt/airflow/logs/dag_processor_manager
+        
+        echo "Исправление прав доступа (chown)..."
+        chown -R airflow:root /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins
+        
+        echo "Инициализация базы данных Airflow..."
+        su airflow -c "airflow db upgrade"
+        
+        echo "Создание пользователя airflow..."
+        su airflow -c "airflow users create \
+          --username airflow \
+          --firstname Airflow \
+          --lastname Admin \
+          --role Admin \
+          --email admin@example.com \
+          --password airflow" || true
+          
+        echo "Инициализация завершена!"
+    networks:
+      - chatbot-network
+    restart: "no"
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - chatbot-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - chatbot-network
+
+  mongodb:
+    image: mongo:7.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: chatbot_db
+    networks:
+      - chatbot-network
+
+  auth-service:
+    build:
+      context: ./auth_service
+      dockerfile: Dockerfile
+    ports:
+      - "8004:8004"
+    environment:
+      MONGODB_URL: mongodb://mongodb:27017
+      DB_NAME: chatbot_db
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production-please}
+    depends_on:
+      - mongodb
+    networks:
+      - chatbot-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - gateway
+      - ws-service
+    networks:
+      - chatbot-network
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      MESSAGE_SERVICE_URL: http://message-service:8001
+      WS_SERVICE_URL: http://ws-service:8002
+      AUTH_SERVICE_URL: http://auth-service:8004
+      CALENDAR_SERVICE_URL: http://calendar-service:8008
+    depends_on:
+      - message-service
+      - ws-service
+      - auth-service
+      - summarizer
+      - business-service
+      - calendar-service
+    networks:
+      - chatbot-network
+
+  message-service:
+    build:
+      context: ./message_service
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      MONGODB_URL: mongodb://mongodb:27017
+      DB_NAME: chatbot_db
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: chat-messages
+      REDIS_URL: redis://redis:6379/0
+      REDIS_HISTORY_MAX_MESSAGES: "200"
+      REDIS_HISTORY_TTL_SECONDS: "604800"
+    depends_on:
+      - mongodb
+      - kafka
+      - redis
+    networks:
+      - chatbot-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    networks:
+      - chatbot-network
+
+  ws-service:
+    build:
+      context: ./ws_service
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_BOT_RESPONSE_TOPIC: bot-responses
+      SECRET_KEY: ${SECRET_KEY:-your-secret-key-change-in-production-please}
+    depends_on:
+      - kafka
+    networks:
+      - chatbot-network
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ./qdrant_data:/qdrant/storage
+    networks:
+      - chatbot-network
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 1 bash -c 'cat < /dev/null > /dev/tcp/localhost/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  qdrant-init:
+    build:
+      context: ./qdrant_init
+      dockerfile: Dockerfile
+    container_name: qdrant-init
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    environment:
+      - QDRANT_URL=http://qdrant:6333
+    networks:
+      - chatbot-network
+    restart: "no"
+
+  bot-service:
+    build: ./bot_service
+    container_name: bot-service
+    ports:
+      - "8003:8003"
+    environment:
+      - MONGODB_URL=mongodb://mongodb:27017
+      - DB_NAME=chatbot_db
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - KAFKA_INPUT_TOPIC=chat-messages
+      - KAFKA_OUTPUT_TOPIC=bot-responses
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - QDRANT_URL=http://qdrant:6333
+    volumes:
+      - ./bot_service:/app
+      - ./agent_system:/app/agent_system
+    depends_on:
+      mongodb:
+        condition: service_started
+      kafka:
+        condition: service_started
+      qdrant-init:
+        condition: service_completed_successfully
+    networks:
+      - chatbot-network
+
+  summarizer:
+    build:
+      context: ./summarizer
+      dockerfile: Dockerfile
+    container_name: summarizer
+    environment:
+      MONGODB_URL: mongodb://mongodb:27017
+      DATABASE_NAME: chatbot_db
+      KAFKA_URL: kafka:9092
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+    depends_on:
+      - mongodb
+      - kafka
+    networks:
+      - chatbot-network
+    restart: unless-stopped
+    volumes:
+      - huggingface_cache:/root/.cache/huggingface
+
+  analyze-service:
+    build: 
+      context: ./analyze_image_service
+      dockerfile: Dockerfile
+    ports:
+      - "8005:8005"
+    environment:
+      - OPENROUTER_API_KEY=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
+      - MAX_FILE_SIZE=10485760
+      - ALLOWED_EXTENSIONS=.jpg,.jpeg,.png,.webp
+      - S3_ACCESS_KEY=${MINIO_ROOT_USER:-minioadmin}
+      - S3_SECRET_KEY=${MINIO_ROOT_PASSWORD:-minioadmin123}
+      - S3_BUCKET_NAME=tech-support
+      - S3_ENDPOINT_URL=http://minio:9000
+      - S3_PUBLIC_URL=/storage
+      - S3_REGION=us-east-1
+    networks:
+      - chatbot-network
+    restart: unless-stopped
+    depends_on:
+      - auth-service
+  
+  minio:
+    image: minio/minio:latest
+    container_name: alphahack_minio
+    ports:
+      - "9000:9000" 
+      - "9001:9001" 
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - minio_data:/data
+    networks:
+    - chatbot-network  
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: alphahack_minio_init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set minio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin123};
+      mc mb minio/tech-support --ignore-existing;
+      mc anonymous set download minio/tech-support;
+      echo 'Minio bucket created successfully';
+      "
+    restart: on-failure
+    networks:
+    - chatbot-network  
+
+  document-parser-service:
+    build: ./file_service
+    container_name: document-parser-service
+    ports:
+      - "8006:8006"
+    environment:
+      - LOG_LEVEL=info
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+    - chatbot-network
+  
+  business-service:
+    build:
+      context: ./business_service
+      dockerfile: Dockerfile
+    container_name: business-service
+    ports:
+      - "8007:8007"
+    environment:
+      MONGODB_URL: mongodb://mongodb:27017
+      DB_NAME: chatbot_db
+    depends_on:
+      - mongodb
+    networks:
+      - chatbot-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8007/docs"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  wb-pnl-service:
+    build: ./wb_analyzer
+    container_name: wb-pnl-service
+    ports:
+      - "8009:8009"
+    depends_on:
+      - mongodb
+    networks:
+      - chatbot-network
+    environment:
+      - MONGO_URL=mongodb://mongodb:27017 
+      - REDIS_URL=redis://redis:6379/0
+      - ENCRYPTION_KEY=dK8bDGrY7GTwIgzVsqipUS7FKO_hQlAyeqixUY5zsKQ=
+    restart: always
+
+  calendar-service:
+    build:
+      context: ./calendar_service
+      dockerfile: Dockerfile
+    container_name: calendar-service
+    ports:
+      - "8008:8008"
+    environment:
+      MONGODB_URL: mongodb://mongodb:27017
+      DB_NAME: chatbot_db
+    depends_on:
+      - mongodb
+    networks:
+      - chatbot-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8008/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  stt-service:
+    build: ./speach_to_text
+    container_name: stt-service
+    restart: unless-stopped
+    ports:
+      - "8010:8010"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    networks:
+      - chatbot-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8010/health"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+
+volumes:
+  postgres-db-volume:
+    driver: local
+  mongodb_data:
+    driver: local
+  qdrant-storage:
+    driver: local
+  huggingface_cache:
+    driver: local
+  minio_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  chatbot-network:
+    driver: bridge

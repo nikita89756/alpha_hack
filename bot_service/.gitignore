@@ -1,0 +1,44 @@
+data/
+/.vscode
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
+*.db
+*.sqlite3
+node_modules/
+build/
+artifacts
+# Celery
+celerybeat-schedule
+celerybeat-schedule.db
+celerybeat.pid
+backend/celerybeat-schedule
+backend/celerybeat-schedule.db
+qdrant_storage/
+support-hints-agent-system/debug.ipynb
+support-hints-agent-system/train_retrieval.ipynb
+# artifacts/artifacts
+*.pth
+*.bin
+*.onnx
+*.h5
+*.pkl
+# *.safetensors
+# *.json
+# *.txt
+*.pt
+.env
+# *.ipynb
+
+.venv/
+artifacts/questions_rag.csv
+artifacts/parsing.ipynb
+artifacts/llm_test.ipynb
+# artifacts/chat_cli.py

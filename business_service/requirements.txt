@@ -1,0 +1,6 @@
+fastapi==0.121.2
+uvicorn[standard]>=0.28
+motor>=3.7
+redis>=5
+confluent-kafka>=2.11
+reportlab>=3.6
