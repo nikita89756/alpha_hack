@@ -832,7 +832,6 @@ Pydantic‑схемы в `web/shemas.py` ограничивают поля, бл
 - **8009** - WB PnL Service (Wildberries Analytics)
 - **8010** - STT Service (Speech-to-Text)
 - **8080** - Airflow Web UI (логин: airflow, пароль: airflow)
-- **3000** - Frontend
 - **6333** - Qdrant API
 - **9000** - MinIO API
 - **9001** - MinIO Console
@@ -849,11 +848,12 @@ Pydantic‑схемы в `web/shemas.py` ограничивают поля, бл
 
 ### Проверка работоспособности
 
-1. **Frontend:** http://localhost:3000
+1. **Frontend:** http://localhost
 2. **Gateway API:** http://localhost:8000/docs (Swagger UI)
 3. **Airflow:** http://localhost:8080
 4. **MinIO Console:** http://localhost:9001
 5. **Qdrant Dashboard:** http://localhost:6333/dashboard
+
 
 
 
